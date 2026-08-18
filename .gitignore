@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# Salidas generadas por el visor (regenerables, no versionadas)
+OBJsExport/*.obj
+!OBJsExport/.gitkeep
+
+.venv/
+venv/
