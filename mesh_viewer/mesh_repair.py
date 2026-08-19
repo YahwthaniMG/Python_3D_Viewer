@@ -55,7 +55,7 @@ def weld_vertices(vertices, faces, epsilon=1e-4):
     return new_vertices, new_faces, num_merged
 
 
-def _edge_owner_map(faces):
+def edge_owner_map(faces):
     """Mapa {arista_no_dirigida: [(cara_idx, arista_dirigida), ...]} — para
     cada arista de triángulo, qué caras la usan y en qué dirección."""
     owners = {}
@@ -89,7 +89,7 @@ def unify_orientation(faces):
 
     Devuelve (new_faces, num_flipped).
     """
-    owners = _edge_owner_map(faces)
+    owners = edge_owner_map(faces)
     result = [list(face) for face in faces]
     visited = [False] * len(faces)
     num_flipped = 0
@@ -127,7 +127,7 @@ def boundary_loops(faces):
     """Encuentra los huecos de la malla como listas de índices de vértice
     (uno por hueco), siguiendo las aristas de borde (usadas por una sola
     cara) en el sentido en que su única cara dueña las recorre."""
-    owners = _edge_owner_map(faces)
+    owners = edge_owner_map(faces)
     next_vertex = {}
     for edge_key, owner_list in owners.items():
         if len(owner_list) == 1:
@@ -185,7 +185,7 @@ def fill_holes(vertices, faces):
 
     Devuelve (new_vertices, new_faces, num_holes_filled).
     """
-    owners = _edge_owner_map(faces)
+    owners = edge_owner_map(faces)
     loops = boundary_loops(faces)
     new_vertices = list(vertices)
     new_faces = list(faces)

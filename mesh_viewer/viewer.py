@@ -13,7 +13,7 @@ from enum import Enum
 import numpy as np
 import pyvista as pv
 
-from . import mesh_ops, mesh_repair, obj_io, topology
+from . import mesh_metrics, mesh_ops, mesh_repair, obj_io, topology
 
 
 class Variant(Enum):
@@ -83,6 +83,26 @@ def _format_stats(stats: topology.MeshStats, num_holes: int) -> str:
         f"Componentes_Conectados: {stats.num_connected_components}\n"
         f"Genus: {stats.genus}\n"
         f"Huecos: {num_holes}"
+    )
+
+
+def _format_metrics(vertices, faces, num_holes: int) -> str:
+    area = mesh_metrics.surface_area(vertices, faces)
+    dx, dy, dz = mesh_metrics.bounding_box(vertices)
+    avg_quality, histogram = mesh_metrics.quality_stats(vertices, faces)
+    bar = mesh_metrics.format_histogram(histogram)
+    non_manifold = mesh_metrics.non_manifold_edge_count(faces)
+    if num_holes == 0:
+        volume_line = f"Volumen: {mesh_metrics.volume(vertices, faces):.3f}"
+    else:
+        volume_line = "Volumen: N/A (no watertight)"
+    return (
+        f"--- Medidas ---\n"
+        f"Area: {area:.3f}\n"
+        f"{volume_line}\n"
+        f"BBox: {dx:.2f} x {dy:.2f} x {dz:.2f}\n"
+        f"Calidad prom: {avg_quality:.2f} [{bar}]\n"
+        f"Aristas non-manifold: {non_manifold}"
     )
 
 
@@ -168,8 +188,9 @@ class MeshViewer:
             if subdivided.n_points > 0:
                 pd = subdivided
             else:
-                print("Aviso: subdividir falló en esta malla (posible topología "
-                      "degenerada), se omite. Probar activando 'Soldar vértices'.")
+                print("Aviso: subdividir falló en esta malla (vértices sin usar o "
+                      "aristas non-manifold — ver 'Aristas non-manifold' en el "
+                      "overlay), se omite.")
         return _polydata_to_mesh(pd)
 
     def _refresh_display(self):
@@ -193,8 +214,9 @@ class MeshViewer:
 
         stats = topology.compute_stats(vertices, faces, self._polygon_stats)
         num_holes = len(mesh_repair.boundary_loops(faces))
+        overlay_text = _format_stats(stats, num_holes) + "\n" + _format_metrics(vertices, faces, num_holes)
         self.plotter.add_text(
-            _format_stats(stats, num_holes), position="upper_left", font_size=10, name="stats_overlay",
+            overlay_text, position="upper_left", font_size=10, name="stats_overlay",
         )
 
     def _add_surface_actor(self, vertices, faces):

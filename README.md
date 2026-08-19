@@ -2,9 +2,10 @@
 
 Visualizador y analizador de mallas 3D en formato OBJ. Carga un modelo,
 calcula sus propiedades topológicas (vértices, caras, aristas, componentes
-conectados, genus vía característica de Euler) y permite comparar tres
-variantes de la malla en una sola ventana: original, suavizado laplaciano y
-edge split.
+conectados, genus vía característica de Euler) y geométricas (área, volumen,
+bounding box, calidad de triángulos, aristas non-manifold), y permite
+comparar tres variantes de la malla en una sola ventana: original, suavizado
+laplaciano y edge split.
 
 ## Instalación
 
@@ -41,10 +42,16 @@ Cada variante se exporta automáticamente a `OBJsExport/` la primera vez que
 se visualiza. Los arreglos de reparación, decimación y subdivisión son solo
 de vista — no se exportan.
 
+El overlay también muestra medidas geométricas de la malla actualmente
+mostrada (con reparaciones/decimación/subdivisión ya aplicadas): área,
+volumen (solo si la malla es watertight, es decir "Huecos: 0"), bounding
+box, calidad promedio de triángulo con un mini-histograma en texto, y
+cantidad de aristas non-manifold (compartidas por 3+ caras).
+
 Nota: la subdivisión Loop puede fallar en mallas con vértices sin usar en
-ninguna cara (defecto real de algunos .obj, p.ej. Bunny.obj) — en ese caso
-el visor avisa por consola y no aplica el cambio; activar "Soldar vértices"
-primero suele resolverlo.
+ninguna cara o con aristas non-manifold (defectos reales de algunos .obj,
+p.ej. Bunny.obj trae 116 vértices sin usar) — en ese caso el visor avisa por
+consola y no aplica el cambio.
 
 ## Estructura
 
@@ -54,6 +61,7 @@ mesh_viewer/
 ├── topology.py     # aristas, componentes conectados, genus
 ├── mesh_ops.py     # suavizado laplaciano, edge split
 ├── mesh_repair.py  # soldadura de vértices, orientación, relleno de huecos
+├── mesh_metrics.py # área, volumen, bounding box, calidad, non-manifold
 ├── viewer.py       # ventana única con PyVista
 └── app.py          # orquestación / entry point
 ```
