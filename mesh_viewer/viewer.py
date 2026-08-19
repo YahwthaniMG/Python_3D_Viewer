@@ -72,37 +72,24 @@ def _polydata_to_mesh(polydata):
     return vertices, faces
 
 
-def _format_stats(stats: topology.MeshStats, num_holes: int) -> str:
-    return (
-        f"Vertices: {stats.num_vertices}\n"
-        f"Poligonos: {stats.num_polygons}\n"
-        f"Triangulos_Pol: {stats.num_triangle_polygons}\n"
-        f"Aristas_Pol: {stats.num_polygon_edges}\n"
-        f"Triangulos: {stats.num_faces}\n"
-        f"Aristas_Tri: {stats.num_triangle_edges}\n"
-        f"Componentes_Conectados: {stats.num_connected_components}\n"
-        f"Genus: {stats.genus}\n"
-        f"Huecos: {num_holes}"
-    )
-
-
-def _format_metrics(vertices, faces, num_holes: int) -> str:
+def _format_overlay(stats: topology.MeshStats, num_holes: int, vertices, faces) -> str:
+    """Une stats académicas + medidas geométricas en un bloque compacto (2
+    valores por línea) para que quepa sin invadir el área de los sliders
+    incluso si la ventana real termina más chica de lo pedido (DPI scaling
+    de Windows escala fuentes/widgets pero no el grid de coordenadas)."""
     area = mesh_metrics.surface_area(vertices, faces)
     dx, dy, dz = mesh_metrics.bounding_box(vertices)
     avg_quality, histogram = mesh_metrics.quality_stats(vertices, faces)
     bar = mesh_metrics.format_histogram(histogram)
     non_manifold = mesh_metrics.non_manifold_edge_count(faces)
-    if num_holes == 0:
-        volume_line = f"Volumen: {mesh_metrics.volume(vertices, faces):.3f}"
-    else:
-        volume_line = "Volumen: N/A (no watertight)"
+    volume_str = f"{mesh_metrics.volume(vertices, faces):.2f}" if num_holes == 0 else "N/A"
     return (
-        f"--- Medidas ---\n"
-        f"Area: {area:.3f}\n"
-        f"{volume_line}\n"
-        f"BBox: {dx:.2f} x {dy:.2f} x {dz:.2f}\n"
-        f"Calidad prom: {avg_quality:.2f} [{bar}]\n"
-        f"Aristas non-manifold: {non_manifold}"
+        f"Vertices: {stats.num_vertices}   Triangulos: {stats.num_faces}   Componentes: {stats.num_connected_components}\n"
+        f"Poligonos: {stats.num_polygons} (Tri:{stats.num_triangle_polygons})   "
+        f"Aristas_Pol: {stats.num_polygon_edges}   Aristas_Tri: {stats.num_triangle_edges}\n"
+        f"Genus: {stats.genus}   Huecos: {num_holes}   Non-manifold: {non_manifold}\n"
+        f"Area: {area:.2f}   Volumen: {volume_str}   BBox: {dx:.2f}x{dy:.2f}x{dz:.2f}\n"
+        f"Calidad: {avg_quality:.2f} [{bar}]"
     )
 
 
@@ -120,7 +107,7 @@ class MeshViewer:
         self._repair = {"weld": False, "orient": False, "fill_holes": False}
         self._decimate = 0.0
         self._subdivide = 0
-        self.plotter = pv.Plotter(title="Python 3D Viewer", window_size=(900, 850))
+        self.plotter = pv.Plotter(title="Python 3D Viewer", window_size=(1200, 900))
         self._setup_ui()
 
     def _get_or_compute(self, variant: Variant) -> VariantData:
@@ -214,7 +201,7 @@ class MeshViewer:
 
         stats = topology.compute_stats(vertices, faces, self._polygon_stats)
         num_holes = len(mesh_repair.boundary_loops(faces))
-        overlay_text = _format_stats(stats, num_holes) + "\n" + _format_metrics(vertices, faces, num_holes)
+        overlay_text = _format_overlay(stats, num_holes, vertices, faces)
         self.plotter.add_text(
             overlay_text, position="upper_left", font_size=10, name="stats_overlay",
         )
@@ -278,18 +265,29 @@ class MeshViewer:
         self.plotter.add_key_event("2", lambda: self._show_variant(Variant.SMOOTHING))
         self.plotter.add_key_event("3", lambda: self._show_variant(Variant.EDGE_SPLIT))
 
-        visibility_positions = [(660, 15), (660, 70), (660, 125)]
+        # Dos columnas (visibilidad | reparación) en vez de una sola pila de
+        # 6, para no depender de tanta altura libre cerca del borde inferior.
+        # Las posiciones x se calculan como fracción del ancho REAL de la
+        # ventana (no un pixel fijo): estos widgets no soportan coordenadas
+        # relativas nativas, y una posición absoluta que asume una ventana
+        # ancha se sale del área visible si la ventana termina más angosta
+        # (p.ej. por DPI scaling de Windows).
+        w, h = self.plotter.window_size
+        visibility_x = int(w * 0.50)
+        repair_x = int(w * 0.70)
+
+        visibility_positions = [(visibility_x, 15), (visibility_x, 65), (visibility_x, 115)]
         visibility_items = [("vertices", "Vértices"), ("edges", "Aristas"), ("surface", "Superficie")]
         for pos, (key, label) in zip(visibility_positions, visibility_items):
             self.plotter.add_checkbox_button_widget(
                 lambda state, k=key: self._toggle_visibility(k, state),
                 value=True,
                 position=pos,
-                size=28,
+                size=24,
             )
-            self.plotter.add_text(label, position=(pos[0] + 40, pos[1] + 6), font_size=9)
+            self.plotter.add_text(label, position=(pos[0] + 34, pos[1] + 5), font_size=9)
 
-        repair_positions = [(660, 185), (660, 240), (660, 295)]
+        repair_positions = [(repair_x, 15), (repair_x, 65), (repair_x, 115)]
         repair_items = [
             ("weld", "Soldar vértices"),
             ("orient", "Unificar orientación"),
@@ -300,24 +298,26 @@ class MeshViewer:
                 lambda state, k=key: self._toggle_repair(k, state),
                 value=False,
                 position=pos,
-                size=28,
+                size=24,
                 color_on="red",
             )
-            self.plotter.add_text(label, position=(pos[0] + 40, pos[1] + 6), font_size=9)
+            self.plotter.add_text(label, position=(pos[0] + 34, pos[1] + 5), font_size=9)
 
-        self.plotter.add_text("Color:", position=(0.32, 0.965), font_size=9, viewport=True)
+        # Sliders corridos a la derecha, lejos de la columna de stats (que
+        # ahora es mucho más compacta) para tener margen de sobra.
+        self.plotter.add_text("Color:", position=(0.42, 0.965), font_size=9, viewport=True)
         self.plotter.add_text_slider_widget(
             self._set_color_mode, data=_COLOR_MODES, value=_COLOR_MODES.index(self._color_mode),
-            pointa=(0.4, 0.96), pointb=(0.78, 0.96),
+            pointa=(0.5, 0.96), pointb=(0.85, 0.96),
         )
 
         self.plotter.add_slider_widget(
             self._set_decimate, rng=[0.0, 0.9], value=self._decimate,
-            title="Decimar", fmt="%.2f", pointa=(0.4, 0.80), pointb=(0.78, 0.80),
+            title="Decimar", fmt="%.2f", pointa=(0.5, 0.85), pointb=(0.85, 0.85),
         )
         self.plotter.add_slider_widget(
             self._set_subdivide, rng=[0, 3], value=self._subdivide,
-            title="Subdividir (Loop)", fmt="%.0f", pointa=(0.4, 0.64), pointb=(0.78, 0.64),
+            title="Subdividir (Loop)", fmt="%.0f", pointa=(0.5, 0.73), pointb=(0.85, 0.73),
         )
 
     def show(self):
