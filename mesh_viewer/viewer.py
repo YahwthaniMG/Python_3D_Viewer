@@ -28,6 +28,16 @@ _EXPORT_SUFFIX = {
     Variant.EDGE_SPLIT: "EdgeSplit",
 }
 
+_SOLID_COLORS = {
+    "Azul": (0.2, 0.4, 1.0),
+    "Rojo": (0.85, 0.2, 0.2),
+    "Verde": (0.2, 0.75, 0.3),
+    "Amarillo": (0.9, 0.8, 0.1),
+    "Gris": (0.6, 0.6, 0.6),
+}
+_COLOR_BY_COMPONENT = "Por Componente"
+_COLOR_MODES = [*_SOLID_COLORS, _COLOR_BY_COMPONENT]
+
 
 @dataclass
 class VariantData:
@@ -74,6 +84,9 @@ class MeshViewer:
         self.obj_file_path = obj_file_path
         self._polygon_stats = None
         self._cache: dict[Variant, VariantData] = {}
+        self._current_variant = Variant.ORIGINAL
+        self._visible = {"vertices": True, "edges": True, "surface": True}
+        self._color_mode = "Azul"
         self.plotter = pv.Plotter(title="Python 3D Viewer", window_size=(900, 700))
         self._setup_ui()
 
@@ -100,31 +113,60 @@ class MeshViewer:
         return VariantData(vertices=vertices, faces=faces, stats=stats)
 
     def _show_variant(self, variant: Variant):
+        self._current_variant = variant
         data = self._get_or_compute(variant)
         edges = topology.triangle_edges(data.faces)
 
-        self.plotter.add_points(
+        points_actor = self.plotter.add_points(
             _points_polydata(data.vertices), color="red", point_size=6,
             render_points_as_spheres=True, name="vertices",
         )
-        self.plotter.add_mesh(
+        edges_actor = self.plotter.add_mesh(
             _edges_polydata(data.vertices, edges), color="green", line_width=1.5, name="edges",
         )
-        self.plotter.add_mesh(
-            _surface_polydata(data.vertices, data.faces), color=(0.2, 0.4, 1.0), name="surface",
-        )
+        points_actor.visibility = self._visible["vertices"]
+        edges_actor.visibility = self._visible["edges"]
+        self._add_surface_actor(data)
+
         self.plotter.add_text(
             _format_stats(data.stats), position="upper_left", font_size=10, name="stats_overlay",
         )
+
+    def _add_surface_actor(self, data: VariantData):
+        """(Re)crea el actor de superficie con el modo de color actual,
+        reemplazando el anterior in-place (mismo `name="surface"`)."""
+        surface_pd = _surface_polydata(data.vertices, data.faces)
+        if self._color_mode == _COLOR_BY_COMPONENT:
+            labels = np.asarray(topology.connected_component_labels(data.faces))
+            actor = self.plotter.add_mesh(
+                surface_pd, scalars=labels, cmap="tab10", show_scalar_bar=False, name="surface",
+            )
+        else:
+            actor = self.plotter.add_mesh(
+                surface_pd, color=_SOLID_COLORS[self._color_mode], name="surface",
+            )
+        actor.visibility = self._visible["surface"]
+        return actor
+
+    def _toggle_visibility(self, key: str, state: bool):
+        self._visible[key] = state
+        actor = self.plotter.actors.get(key)
+        if actor is not None:
+            actor.visibility = state
+
+    def _set_color_mode(self, value: str):
+        self._color_mode = value
+        self._add_surface_actor(self._get_or_compute(self._current_variant))
 
     def _setup_ui(self):
         self.plotter.add_text(
             "Arrastrar = rotar | Rueda = zoom | 1/2/3 = variante",
             position="upper_right", font_size=8, name="help",
         )
-        button_positions = [(15, 15), (15, 70), (15, 125)]
+
+        variant_positions = [(15, 15), (15, 70), (15, 125)]
         variants = [Variant.ORIGINAL, Variant.SMOOTHING, Variant.EDGE_SPLIT]
-        for pos, variant in zip(button_positions, variants):
+        for pos, variant in zip(variant_positions, variants):
             self.plotter.add_radio_button_widget(
                 lambda v=variant: self._show_variant(v),
                 radio_button_group="mesh_variant",
@@ -136,6 +178,23 @@ class MeshViewer:
         self.plotter.add_key_event("1", lambda: self._show_variant(Variant.ORIGINAL))
         self.plotter.add_key_event("2", lambda: self._show_variant(Variant.SMOOTHING))
         self.plotter.add_key_event("3", lambda: self._show_variant(Variant.EDGE_SPLIT))
+
+        visibility_positions = [(660, 15), (660, 70), (660, 125)]
+        visibility_items = [("vertices", "Vértices"), ("edges", "Aristas"), ("surface", "Superficie")]
+        for pos, (key, label) in zip(visibility_positions, visibility_items):
+            self.plotter.add_checkbox_button_widget(
+                lambda state, k=key: self._toggle_visibility(k, state),
+                value=True,
+                position=pos,
+                size=28,
+            )
+            self.plotter.add_text(label, position=(pos[0] + 40, pos[1] + 6), font_size=9)
+
+        self.plotter.add_text("Color:", position=(0.32, 0.955), font_size=9, viewport=True)
+        self.plotter.add_text_slider_widget(
+            self._set_color_mode, data=_COLOR_MODES, value=_COLOR_MODES.index(self._color_mode),
+            pointa=(0.4, 0.95), pointb=(0.78, 0.95),
+        )
 
     def show(self):
         self._show_variant(Variant.ORIGINAL)

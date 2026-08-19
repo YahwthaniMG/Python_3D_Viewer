@@ -32,40 +32,47 @@ def triangle_edges(faces):
     return list(edges)
 
 
-def count_connected_components(vertices, faces):
-    """Cuenta componentes conectados del grafo de caras, donde dos caras son
-    adyacentes si comparten al menos un vértice (mismo criterio que la
-    versión original).
+def connected_component_labels(faces):
+    """Asigna a cada cara el id (0..k-1) de su componente conexo, donde dos
+    caras son adyacentes si comparten al menos un vértice (mismo criterio
+    que la versión original).
 
-    Antes: para cada cara se recorrían TODAS las caras buscando coincidencias
-    de vértice (O(F²)). Ahora se construye un índice invertido
-    vértice -> caras una sola vez (O(F)) y se usa para el BFS.
+    Construye un índice invertido vértice -> caras una sola vez (O(F)) y lo
+    usa para el BFS, en vez de recorrer todas las caras por cada cara (lo
+    que hacía la versión original, O(F²)).
     """
     if not faces:
-        return 0
+        return []
 
     vertex_to_faces = {}
     for face_index, face in enumerate(faces):
         for vertex in face:
             vertex_to_faces.setdefault(vertex, []).append(face_index)
 
-    visited = set()
-    num_components = 0
+    labels = [-1] * len(faces)
+    next_label = 0
     for start_face in range(len(faces)):
-        if start_face in visited:
+        if labels[start_face] != -1:
             continue
-        num_components += 1
         queue = deque([start_face])
-        visited.add(start_face)
+        labels[start_face] = next_label
         while queue:
             current_face = queue.popleft()
             for vertex in faces[current_face]:
                 for neighbor_face in vertex_to_faces[vertex]:
-                    if neighbor_face not in visited:
-                        visited.add(neighbor_face)
+                    if labels[neighbor_face] == -1:
+                        labels[neighbor_face] = next_label
                         queue.append(neighbor_face)
+        next_label += 1
 
-    return num_components
+    return labels
+
+
+def count_connected_components(vertices, faces):
+    """Cuenta componentes conectados del grafo de caras (ver
+    `connected_component_labels` para el criterio de adyacencia)."""
+    labels = connected_component_labels(faces)
+    return len(set(labels)) if labels else 0
 
 
 def calculate_genus(vertices, edges, faces):

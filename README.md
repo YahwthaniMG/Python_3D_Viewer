@@ -26,6 +26,9 @@ Controles en la ventana:
 - Rueda del mouse = zoom
 - Radio buttons (o teclas `1`/`2`/`3`) = cambiar entre Original, Laplacian
   Smoothing y Edge Split
+- Checkboxes (Vértices / Aristas / Superficie) = mostrar u ocultar cada capa
+- Slider "Color" = color sólido de la superficie, o "Por Componente" para
+  colorear cada componente conectado con un color distinto
 
 Cada variante se exporta automáticamente a `OBJsExport/` la primera vez que
 se visualiza.
