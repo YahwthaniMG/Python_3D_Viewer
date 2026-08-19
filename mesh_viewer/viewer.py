@@ -63,6 +63,15 @@ def _surface_polydata(vertices, faces):
     return pv.PolyData(np.asarray(vertices, dtype=float), padded.ravel())
 
 
+def _polydata_to_mesh(polydata):
+    """Extrae (vertices, faces) de un PolyData triangulado de VTK, para
+    seguir usando la misma representación simple en el resto del pipeline
+    (topology.py, mesh_repair.py) tras pasar por decimate()/subdivide()."""
+    vertices = polydata.points.tolist()
+    faces = polydata.faces.reshape(-1, 4)[:, 1:].tolist()
+    return vertices, faces
+
+
 def _format_stats(stats: topology.MeshStats, num_holes: int) -> str:
     return (
         f"Vertices: {stats.num_vertices}\n"
@@ -89,7 +98,9 @@ class MeshViewer:
         self._visible = {"vertices": True, "edges": True, "surface": True}
         self._color_mode = "Azul"
         self._repair = {"weld": False, "orient": False, "fill_holes": False}
-        self.plotter = pv.Plotter(title="Python 3D Viewer", window_size=(900, 700))
+        self._decimate = 0.0
+        self._subdivide = 0
+        self.plotter = pv.Plotter(title="Python 3D Viewer", window_size=(900, 850))
         self._setup_ui()
 
     def _get_or_compute(self, variant: Variant) -> VariantData:
@@ -131,11 +142,42 @@ class MeshViewer:
             vertices, faces, _ = mesh_repair.fill_holes(vertices, faces)
         return vertices, faces
 
+    def _apply_lod(self, vertices, faces):
+        """Ajusta el nivel de detalle sobre la malla ya reparada: decimar
+        (reducir triángulos, quadric decimation de VTK) y/o subdividir
+        (suavizado tipo Loop, agrega detalle). Se aplican en ese orden si
+        ambos están activos.
+
+        Los filtros de VTK pueden fallar en silencio (sin lanzar excepción,
+        devolviendo un PolyData vacío) en mallas con vértices sin usar en
+        ninguna cara u otra topología degenerada — p.ej. Bunny.obj trae 116
+        vértices declarados que ninguna cara referencia, lo que hace fallar
+        la subdivisión Loop. Si eso pasa, se ignora ese paso en vez de
+        propagar una malla vacía."""
+        if self._decimate <= 0 and self._subdivide <= 0:
+            return vertices, faces
+        pd = _surface_polydata(vertices, faces)
+        if self._decimate > 0:
+            decimated = pd.decimate(self._decimate)
+            if decimated.n_points > 0:
+                pd = decimated
+            else:
+                print("Aviso: decimar falló en esta malla, se omite.")
+        if self._subdivide > 0:
+            subdivided = pd.subdivide(self._subdivide, subfilter="loop")
+            if subdivided.n_points > 0:
+                pd = subdivided
+            else:
+                print("Aviso: subdividir falló en esta malla (posible topología "
+                      "degenerada), se omite. Probar activando 'Soldar vértices'.")
+        return _polydata_to_mesh(pd)
+
     def _refresh_display(self):
         """Recalcula y vuelve a dibujar todo a partir de la variante y los
-        toggles de reparación/color/visibilidad actuales."""
+        toggles de reparación/color/visibilidad/nivel de detalle actuales."""
         data = self._get_or_compute(self._current_variant)
         vertices, faces = self._apply_repairs(data.vertices, data.faces)
+        vertices, faces = self._apply_lod(vertices, faces)
         edges = topology.triangle_edges(faces)
 
         points_actor = self.plotter.add_points(
@@ -183,6 +225,14 @@ class MeshViewer:
 
     def _set_color_mode(self, value: str):
         self._color_mode = value
+        self._refresh_display()
+
+    def _set_decimate(self, value: float):
+        self._decimate = value
+        self._refresh_display()
+
+    def _set_subdivide(self, value: float):
+        self._subdivide = round(value)
         self._refresh_display()
 
     def _setup_ui(self):
@@ -233,10 +283,19 @@ class MeshViewer:
             )
             self.plotter.add_text(label, position=(pos[0] + 40, pos[1] + 6), font_size=9)
 
-        self.plotter.add_text("Color:", position=(0.32, 0.955), font_size=9, viewport=True)
+        self.plotter.add_text("Color:", position=(0.32, 0.965), font_size=9, viewport=True)
         self.plotter.add_text_slider_widget(
             self._set_color_mode, data=_COLOR_MODES, value=_COLOR_MODES.index(self._color_mode),
-            pointa=(0.4, 0.95), pointb=(0.78, 0.95),
+            pointa=(0.4, 0.96), pointb=(0.78, 0.96),
+        )
+
+        self.plotter.add_slider_widget(
+            self._set_decimate, rng=[0.0, 0.9], value=self._decimate,
+            title="Decimar", fmt="%.2f", pointa=(0.4, 0.80), pointb=(0.78, 0.80),
+        )
+        self.plotter.add_slider_widget(
+            self._set_subdivide, rng=[0, 3], value=self._subdivide,
+            title="Subdividir (Loop)", fmt="%.0f", pointa=(0.4, 0.64), pointb=(0.78, 0.64),
         )
 
     def show(self):

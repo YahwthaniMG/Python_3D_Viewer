@@ -32,9 +32,19 @@ Controles en la ventana:
 - Checkboxes de reparación (Soldar vértices / Unificar orientación / Rellenar
   huecos) = aplican sobre la variante actual, en ese orden fijo, y se
   recalculan al vuelo (no mutan los archivos ni el caché de la variante)
+- Slider "Decimar" = reduce triángulos preservando la forma (quadric
+  decimation de VTK), 0 = sin reducir, 0.9 = ~90% menos triángulos
+- Slider "Subdividir (Loop)" = suaviza y agrega detalle (0 a 3 niveles,
+  cada nivel ~4x los triángulos)
 
 Cada variante se exporta automáticamente a `OBJsExport/` la primera vez que
-se visualiza. Los arreglos de reparación son solo de vista — no se exportan.
+se visualiza. Los arreglos de reparación, decimación y subdivisión son solo
+de vista — no se exportan.
+
+Nota: la subdivisión Loop puede fallar en mallas con vértices sin usar en
+ninguna cara (defecto real de algunos .obj, p.ej. Bunny.obj) — en ese caso
+el visor avisa por consola y no aplica el cambio; activar "Soldar vértices"
+primero suele resolverlo.
 
 ## Estructura
 

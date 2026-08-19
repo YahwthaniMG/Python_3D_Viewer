@@ -9,34 +9,47 @@ from collections import deque
 
 
 def weld_vertices(vertices, faces, epsilon=1e-4):
-    """Funde vértices coincidentes (dentro de `epsilon`) en uno solo.
+    """Funde vértices coincidentes (dentro de `epsilon`) en uno solo, y
+    descarta los vértices que ninguna cara termina usando.
 
     Agrupa vértices por celda de una grilla de tamaño `epsilon` (mismo
     enfoque simple que usa MeshLab por defecto en "Merge Close Vertices"):
     vértices que caen en la misma celda se funden al primero encontrado.
     Elimina además las caras que quedan degeneradas (con vértices repetidos)
-    tras la soldadura.
+    tras la soldadura, y los vértices que quedan sin ninguna cara (algunos
+    .obj traen líneas "v" declaradas que ninguna "f" referencia — p.ej.
+    Bunny.obj trae 116 así; eso hace fallar filtros de VTK como la
+    subdivisión Loop, que esperan que todo punto tenga alguna cara alrededor).
 
     Devuelve (new_vertices, new_faces, num_merged).
     """
-    new_vertices = []
-    old_to_new = []
-    cell_to_new_index = {}
+    merged_vertices = []
+    old_to_merged = []
+    cell_to_merged_index = {}
 
     for vertex in vertices:
         cell = tuple(round(c / epsilon) for c in vertex)
-        new_index = cell_to_new_index.get(cell)
-        if new_index is None:
-            new_index = len(new_vertices)
-            cell_to_new_index[cell] = new_index
-            new_vertices.append(vertex)
-        old_to_new.append(new_index)
+        merged_index = cell_to_merged_index.get(cell)
+        if merged_index is None:
+            merged_index = len(merged_vertices)
+            cell_to_merged_index[cell] = merged_index
+            merged_vertices.append(vertex)
+        old_to_merged.append(merged_index)
 
-    new_faces = []
+    merged_faces = []
     for face in faces:
-        remapped = [old_to_new[v] for v in face]
+        remapped = [old_to_merged[v] for v in face]
         if len(set(remapped)) == len(remapped):  # descarta caras degeneradas
-            new_faces.append(remapped)
+            merged_faces.append(remapped)
+
+    used = {v for face in merged_faces for v in face}
+    merged_to_new = {}
+    new_vertices = []
+    for merged_index, vertex in enumerate(merged_vertices):
+        if merged_index in used:
+            merged_to_new[merged_index] = len(new_vertices)
+            new_vertices.append(vertex)
+    new_faces = [[merged_to_new[v] for v in face] for face in merged_faces]
 
     num_merged = len(vertices) - len(new_vertices)
     return new_vertices, new_faces, num_merged
