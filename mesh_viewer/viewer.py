@@ -13,7 +13,7 @@ from enum import Enum
 import numpy as np
 import pyvista as pv
 
-from . import mesh_ops, obj_io, topology
+from . import mesh_ops, mesh_repair, obj_io, topology
 
 
 class Variant(Enum):
@@ -63,7 +63,7 @@ def _surface_polydata(vertices, faces):
     return pv.PolyData(np.asarray(vertices, dtype=float), padded.ravel())
 
 
-def _format_stats(stats: topology.MeshStats) -> str:
+def _format_stats(stats: topology.MeshStats, num_holes: int) -> str:
     return (
         f"Vertices: {stats.num_vertices}\n"
         f"Poligonos: {stats.num_polygons}\n"
@@ -72,7 +72,8 @@ def _format_stats(stats: topology.MeshStats) -> str:
         f"Triangulos: {stats.num_faces}\n"
         f"Aristas_Tri: {stats.num_triangle_edges}\n"
         f"Componentes_Conectados: {stats.num_connected_components}\n"
-        f"Genus: {stats.genus}"
+        f"Genus: {stats.genus}\n"
+        f"Huecos: {num_holes}"
     )
 
 
@@ -87,6 +88,7 @@ class MeshViewer:
         self._current_variant = Variant.ORIGINAL
         self._visible = {"vertices": True, "edges": True, "surface": True}
         self._color_mode = "Azul"
+        self._repair = {"weld": False, "orient": False, "fill_holes": False}
         self.plotter = pv.Plotter(title="Python 3D Viewer", window_size=(900, 700))
         self._setup_ui()
 
@@ -114,30 +116,51 @@ class MeshViewer:
 
     def _show_variant(self, variant: Variant):
         self._current_variant = variant
-        data = self._get_or_compute(variant)
-        edges = topology.triangle_edges(data.faces)
+        self._refresh_display()
+
+    def _apply_repairs(self, vertices, faces):
+        """Aplica sobre la variante actual, en orden fijo, los arreglos de
+        malla activados: soldar vértices -> unificar orientación -> rellenar
+        huecos. No toca el caché de la variante cruda (Original/Suavizado/
+        Edge Split) — se recalcula cada vez que cambia algún toggle."""
+        if self._repair["weld"]:
+            vertices, faces, _ = mesh_repair.weld_vertices(vertices, faces)
+        if self._repair["orient"]:
+            faces, _ = mesh_repair.unify_orientation(faces)
+        if self._repair["fill_holes"]:
+            vertices, faces, _ = mesh_repair.fill_holes(vertices, faces)
+        return vertices, faces
+
+    def _refresh_display(self):
+        """Recalcula y vuelve a dibujar todo a partir de la variante y los
+        toggles de reparación/color/visibilidad actuales."""
+        data = self._get_or_compute(self._current_variant)
+        vertices, faces = self._apply_repairs(data.vertices, data.faces)
+        edges = topology.triangle_edges(faces)
 
         points_actor = self.plotter.add_points(
-            _points_polydata(data.vertices), color="red", point_size=6,
+            _points_polydata(vertices), color="red", point_size=6,
             render_points_as_spheres=True, name="vertices",
         )
         edges_actor = self.plotter.add_mesh(
-            _edges_polydata(data.vertices, edges), color="green", line_width=1.5, name="edges",
+            _edges_polydata(vertices, edges), color="green", line_width=1.5, name="edges",
         )
         points_actor.visibility = self._visible["vertices"]
         edges_actor.visibility = self._visible["edges"]
-        self._add_surface_actor(data)
+        self._add_surface_actor(vertices, faces)
 
+        stats = topology.compute_stats(vertices, faces, self._polygon_stats)
+        num_holes = len(mesh_repair.boundary_loops(faces))
         self.plotter.add_text(
-            _format_stats(data.stats), position="upper_left", font_size=10, name="stats_overlay",
+            _format_stats(stats, num_holes), position="upper_left", font_size=10, name="stats_overlay",
         )
 
-    def _add_surface_actor(self, data: VariantData):
+    def _add_surface_actor(self, vertices, faces):
         """(Re)crea el actor de superficie con el modo de color actual,
         reemplazando el anterior in-place (mismo `name="surface"`)."""
-        surface_pd = _surface_polydata(data.vertices, data.faces)
+        surface_pd = _surface_polydata(vertices, faces)
         if self._color_mode == _COLOR_BY_COMPONENT:
-            labels = np.asarray(topology.connected_component_labels(data.faces))
+            labels = np.asarray(topology.connected_component_labels(faces))
             actor = self.plotter.add_mesh(
                 surface_pd, scalars=labels, cmap="tab10", show_scalar_bar=False, name="surface",
             )
@@ -154,9 +177,13 @@ class MeshViewer:
         if actor is not None:
             actor.visibility = state
 
+    def _toggle_repair(self, key: str, state: bool):
+        self._repair[key] = state
+        self._refresh_display()
+
     def _set_color_mode(self, value: str):
         self._color_mode = value
-        self._add_surface_actor(self._get_or_compute(self._current_variant))
+        self._refresh_display()
 
     def _setup_ui(self):
         self.plotter.add_text(
@@ -190,6 +217,22 @@ class MeshViewer:
             )
             self.plotter.add_text(label, position=(pos[0] + 40, pos[1] + 6), font_size=9)
 
+        repair_positions = [(660, 185), (660, 240), (660, 295)]
+        repair_items = [
+            ("weld", "Soldar vértices"),
+            ("orient", "Unificar orientación"),
+            ("fill_holes", "Rellenar huecos"),
+        ]
+        for pos, (key, label) in zip(repair_positions, repair_items):
+            self.plotter.add_checkbox_button_widget(
+                lambda state, k=key: self._toggle_repair(k, state),
+                value=False,
+                position=pos,
+                size=28,
+                color_on="red",
+            )
+            self.plotter.add_text(label, position=(pos[0] + 40, pos[1] + 6), font_size=9)
+
         self.plotter.add_text("Color:", position=(0.32, 0.955), font_size=9, viewport=True)
         self.plotter.add_text_slider_widget(
             self._set_color_mode, data=_COLOR_MODES, value=_COLOR_MODES.index(self._color_mode),
@@ -197,6 +240,6 @@ class MeshViewer:
         )
 
     def show(self):
-        self._show_variant(Variant.ORIGINAL)
+        self._refresh_display()
         self.plotter.reset_camera()
         self.plotter.show()

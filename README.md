@@ -29,17 +29,21 @@ Controles en la ventana:
 - Checkboxes (Vértices / Aristas / Superficie) = mostrar u ocultar cada capa
 - Slider "Color" = color sólido de la superficie, o "Por Componente" para
   colorear cada componente conectado con un color distinto
+- Checkboxes de reparación (Soldar vértices / Unificar orientación / Rellenar
+  huecos) = aplican sobre la variante actual, en ese orden fijo, y se
+  recalculan al vuelo (no mutan los archivos ni el caché de la variante)
 
 Cada variante se exporta automáticamente a `OBJsExport/` la primera vez que
-se visualiza.
+se visualiza. Los arreglos de reparación son solo de vista — no se exportan.
 
 ## Estructura
 
 ```text
 mesh_viewer/
-├── obj_io.py      # lectura/escritura de archivos .obj
-├── topology.py    # aristas, componentes conectados, genus
-├── mesh_ops.py    # suavizado laplaciano, edge split
+├── obj_io.py       # lectura/escritura de archivos .obj
+├── topology.py     # aristas, componentes conectados, genus
+├── mesh_ops.py     # suavizado laplaciano, edge split
+├── mesh_repair.py  # soldadura de vértices, orientación, relleno de huecos
 ├── viewer.py       # ventana única con PyVista
-└── app.py           # orquestación / entry point
+└── app.py          # orquestación / entry point
 ```
