@@ -32,7 +32,10 @@ Controles en la ventana:
   colorear cada componente conectado con un color distinto
 - Checkboxes de reparación (Soldar vértices / Unificar orientación / Rellenar
   huecos) = aplican sobre la variante actual, en ese orden fijo, y se
-  recalculan al vuelo (no mutan los archivos ni el caché de la variante)
+  recalculan al vuelo (no mutan los archivos ni el caché de la variante).
+  "Rellenar huecos" triangula cada hueco por ear clipping, siguiendo la
+  forma real del contorno (no un abanico desde un centroide), y nunca crea
+  una cara que duplique una arista que ya tenga 2 dueños.
 - Slider "Decimar" = reduce triángulos preservando la forma (quadric
   decimation de VTK), 0 = sin reducir, 0.9 = ~90% menos triángulos
 - Slider "Subdividir (Loop)" = suaviza y agrega detalle (0 a 3 niveles,
