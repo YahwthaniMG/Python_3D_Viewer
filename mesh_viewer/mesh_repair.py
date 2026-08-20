@@ -5,6 +5,7 @@ A diferencia de mesh_ops.py (que genera variantes académicas de la malla),
 estos algoritmos arreglan defectos comunes de mallas escaneadas/exportadas.
 """
 
+import math
 from collections import deque
 
 
@@ -232,6 +233,113 @@ def _edge_key(u, v):
     return (u, v) if u < v else (v, u)
 
 
+def _average_boundary_edge_length(vertices, loop):
+    n = len(loop)
+    total = sum(_dist3(vertices[loop[i]], vertices[loop[(i + 1) % n]]) for i in range(n))
+    return total / n
+
+
+def _dist3(a, b):
+    return math.sqrt(sum((a[k] - b[k]) ** 2 for k in range(3)))
+
+
+def _polygon_plane_basis(vertices, loop):
+    """Origen (centroide) y una base ortonormal (normal, eje_u, eje_v) del
+    plano que mejor ajusta al polígono. Devuelve None si el polígono es
+    degenerado (normal ~0, p.ej. todos sus vértices colineales)."""
+    origin = _polygon_centroid(vertices, loop)
+    normal = _polygon_normal(vertices, loop)
+    normal_len = math.sqrt(_dot(normal, normal))
+    if normal_len < 1e-12:
+        return None
+    normal = tuple(c / normal_len for c in normal)
+
+    seed = (1.0, 0.0, 0.0) if abs(normal[0]) < 0.9 else (0.0, 1.0, 0.0)
+    u = _sub3(seed, tuple(c * _dot(seed, normal) for c in normal))
+    u_len = math.sqrt(_dot(u, u))
+    if u_len < 1e-12:
+        return None
+    u = tuple(c / u_len for c in u)
+    v = _cross(normal, u)
+    return origin, normal, u, v
+
+
+def _to_plane_2d(point, origin, u, v):
+    d = _sub3(point, origin)
+    return (_dot(d, u), _dot(d, v))
+
+
+def _point_in_polygon_2d(p, poly2d):
+    """Ray casting estándar: ¿`p` cae dentro del polígono 2D `poly2d`?"""
+    x, y = p
+    inside = False
+    n = len(poly2d)
+    for i in range(n):
+        x1, y1 = poly2d[i]
+        x2, y2 = poly2d[(i + 1) % n]
+        if (y1 > y) != (y2 > y):
+            x_intersect = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+            if x < x_intersect:
+                inside = not inside
+    return inside
+
+
+def _dist_point_to_segment_2d(p, a, b):
+    px, py = p
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    length_sq = dx * dx + dy * dy
+    if length_sq < 1e-18:
+        return math.hypot(px - ax, py - ay)
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length_sq))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
+def _dist_point_to_polygon_2d(p, poly2d):
+    n = len(poly2d)
+    return min(_dist_point_to_segment_2d(p, poly2d[i], poly2d[(i + 1) % n]) for i in range(n))
+
+
+def generate_interior_points(vertices, loop, spacing):
+    """Genera puntos 3D nuevos adentro del polígono `loop`, en una grilla
+    tipo hexagonal (filas alternadas desplazadas) espaciada ~`spacing`,
+    proyectando sobre el plano que mejor ajusta al polígono. Descarta los
+    puntos que caen fuera del polígono o muy cerca de su borde (para no
+    dejar triángulos angostos pegados al borde).
+
+    Devuelve una lista de puntos 3D nuevos (todavía no agregados a ninguna
+    malla) — lista vacía si el polígono es muy chico/degenerado para que
+    quepa ni un solo punto interior."""
+    if spacing <= 0:
+        return []
+    basis = _polygon_plane_basis(vertices, loop)
+    if basis is None:
+        return []
+    origin, normal, u, v = basis
+
+    poly2d = [_to_plane_2d(vertices[i], origin, u, v) for i in loop]
+    xs, ys = [p[0] for p in poly2d], [p[1] for p in poly2d]
+    min_x, max_x, min_y, max_y = min(xs), max(xs), min(ys), max(ys)
+
+    margin = spacing * 0.6
+    row_height = spacing * 0.866  # ~sqrt(3)/2, filas tipo grilla triangular
+    points = []
+    y = min_y + spacing
+    row = 0
+    while y < max_y:
+        x_offset = (spacing / 2) if row % 2 else 0.0
+        x = min_x + spacing + x_offset
+        while x < max_x:
+            p2 = (x, y)
+            if _point_in_polygon_2d(p2, poly2d) and _dist_point_to_polygon_2d(p2, poly2d) >= margin:
+                points.append([origin[k] + p2[0] * u[k] + p2[1] * v[k] for k in range(3)])
+            x += spacing
+        y += row_height
+        row += 1
+    return points
+
+
 def _ear_clip(vertices, loop, flip, owner_count):
     """Triangula el polígono `loop` (vértices ya existentes, en el orden de
     winding correcto según `flip`) por ear clipping: en cada paso busca 3
@@ -300,11 +408,108 @@ def _ear_clip(vertices, loop, flip, owner_count):
     return faces
 
 
+def _delaunay_fill(vertices, loop, flip, owner_count):
+    """Intenta rellenar el hueco insertando puntos interiores nuevos (ver
+    generate_interior_points) y retriangulando con Delaunay 2D restringido
+    al borde (vtkDelaunay2D vía pyvista, con `edge_source` fijando el
+    contorno) — da un patrón más parecido a una grilla regular que ear
+    clipping, que solo conecta los vértices del borde ya existentes.
+
+    Devuelve (nuevos_puntos, nuevas_caras), o None si algo no cuadra (no hay
+    lugar para puntos interiores, el filtro no da triángulos limpios, o el
+    resultado duplicaría una arista que ya tiene 2 dueños) — en ese caso el
+    llamador cae de vuelta a ear clipping, ya validado como robusto."""
+    import numpy as np
+    import pyvista as pv
+
+    spacing = _average_boundary_edge_length(vertices, loop)
+    interior = generate_interior_points(vertices, loop, spacing)
+    if not interior:
+        return None
+
+    n = len(loop)
+    all_pts = np.asarray([list(vertices[i]) for i in loop] + interior, dtype=float)
+
+    cloud = pv.PolyData(all_pts)
+    edge_source = pv.PolyData()
+    edge_source.points = all_pts
+    edge_source.lines = np.array([x for i in range(n) for x in (2, i, (i + 1) % n)], dtype=np.int64)
+
+    try:
+        result = cloud.delaunay_2d(edge_source=edge_source)
+    except Exception:
+        return None
+    if result.n_points == 0 or result.n_cells == 0:
+        return None
+
+    faces_arr = result.faces
+    if faces_arr.size == 0 or faces_arr.size % 4 != 0:
+        return None
+    faces_local = faces_arr.reshape(-1, 4)
+    if not np.all(faces_local[:, 0] == 3):
+        return None  # algun output que no es triangulo puro -> no confiar
+
+    # vtkDelaunay2D con edge_source (Delaunay restringido) puede devolver
+    # triángulos con winding internamente inconsistente entre sí — se
+    # verificó empíricamente (una grilla con hueco grande dio 6 aristas
+    # inconsistentes en el resultado crudo). Se reutiliza unify_orientation
+    # para forzar consistencia interna antes de decidir si hay que voltear
+    # el lote completo.
+    faces_local_list, _ = unify_orientation(faces_local[:, 1:].tolist())
+
+    base_new_index = len(vertices)
+
+    def remap(i):
+        return loop[i] if i < n else base_new_index + (i - n)
+
+    candidate_faces = [[remap(a), remap(b), remap(c)] for a, b, c in faces_local_list]
+
+    # ¿Hay que voltear todo el resultado? Se compara UNA cara de muestra que
+    # use la arista de borde (loop[0], loop[1]) contra el sentido esperado
+    # según `flip` (mismo criterio que _ear_clip). Ahora que ya se forzó
+    # consistencia interna arriba, alcanza con revisar una sola cara.
+    u0, v0 = loop[0], loop[1]
+    expected = (u0, v0) if flip else (v0, u0)
+    reverse_all = None
+    for face in candidate_faces:
+        if u0 in face and v0 in face:
+            k = face.index(u0)
+            actual = (u0, v0) if face[(k + 1) % 3] == v0 else (v0, u0)
+            reverse_all = actual != expected
+            break
+    if reverse_all is None:
+        return None
+    if reverse_all:
+        candidate_faces = [list(reversed(f)) for f in candidate_faces]
+
+    # Nunca duplicar una arista que ya tenga 2 dueños (mismo chequeo que
+    # ear clipping) — si cualquier cara del resultado lo haría, se descarta
+    # el intento completo (todo o nada) y se cae a ear clipping. Se valida
+    # de forma incremental contra una copia temporal (no la real hasta el
+    # final): si se comparara cada cara contra una sola foto fija del
+    # estado, 3+ caras del propio lote que terminan compartiendo una arista
+    # entre sí (posible si el filtro genera puntos casi coincidentes) se
+    # colarían, porque cada una individualmente ve el conteo en 0 o 1.
+    staged = dict(owner_count)
+    for face in candidate_faces:
+        for j in range(3):
+            key = _edge_key(face[j], face[(j + 1) % 3])
+            count = staged.get(key, 0) + 1
+            if count > 2:
+                return None
+            staged[key] = count
+
+    owner_count.clear()
+    owner_count.update(staged)
+    return interior, candidate_faces
+
+
 def fill_holes(vertices, faces):
-    """Rellena cada hueco triangulándolo por ear clipping (ver _ear_clip),
-    que sigue la forma real del contorno en vez de un abanico desde un
-    único centroide (que en huecos grandes o alargados deja triángulos
-    enormes y mal formados comparados con el resto de la malla).
+    """Rellena cada hueco, insertando puntos interiores nuevos y
+    retriangulando con Delaunay 2D restringido al borde cuando hay lugar
+    para eso (ver _delaunay_fill — da un patrón parecido a una grilla
+    regular), o por ear clipping si no (ver _ear_clip — hueco chico, o el
+    intento con Delaunay no dio un resultado confiable).
 
     Para una arista de borde (u, v), el orden "natural" de la cara de
     relleno es (v, u, ...). Eso da la orientación correcta cuando el hueco
@@ -335,7 +540,12 @@ def fill_holes(vertices, faces):
         flip = _dot(candidate_normal, neighbor_normal) < 0
         del new_vertices[probe_centroid_index]  # solo era para decidir el sentido
 
-        fill_faces = _ear_clip(new_vertices, loop, flip, owner_count)
+        result = _delaunay_fill(new_vertices, loop, flip, owner_count)
+        if result is not None:
+            interior_points, fill_faces = result
+            new_vertices.extend(interior_points)
+        else:
+            fill_faces = _ear_clip(new_vertices, loop, flip, owner_count)
         new_faces.extend(fill_faces)
 
     return new_vertices, new_faces, len(loops)

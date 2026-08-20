@@ -116,7 +116,7 @@ class MeshViewer:
         self._decimate = 0.0
         self._subdivide = 0
         self._warning = ""
-        self.plotter = pv.Plotter(title="Python 3D Viewer", window_size=(1400, 800))
+        self.plotter = pv.Plotter(title="Python 3D Viewer", window_size=(1200, 700))
         self._setup_ui()
 
     def _get_or_compute(self, variant: Variant) -> VariantData:

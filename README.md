@@ -33,9 +33,12 @@ Controles en la ventana:
 - Checkboxes de reparación (Soldar vértices / Unificar orientación / Rellenar
   huecos) = aplican sobre la variante actual, en ese orden fijo, y se
   recalculan al vuelo (no mutan los archivos ni el caché de la variante).
-  "Rellenar huecos" triangula cada hueco por ear clipping, siguiendo la
-  forma real del contorno (no un abanico desde un centroide), y nunca crea
-  una cara que duplique una arista que ya tenga 2 dueños.
+  "Rellenar huecos" primero intenta insertar puntos interiores nuevos y
+  retriangular con Delaunay 2D restringido al borde (un patrón parecido a
+  una grilla regular); si el hueco es muy chico para eso o el resultado no
+  se puede validar como seguro, cae a ear clipping (sigue la forma real del
+  contorno, sin puntos nuevos). En ambos casos, nunca crea una cara que
+  duplique una arista que ya tenga 2 dueños.
 - Slider "Decimar" = reduce triángulos preservando la forma (quadric
   decimation de VTK), 0 = sin reducir, 0.9 = ~90% menos triángulos
 - Slider "Subdividir (Loop)" = suaviza y agrega detalle (0 a 3 niveles,
