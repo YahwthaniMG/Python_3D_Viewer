@@ -12,8 +12,15 @@ from enum import Enum
 
 import numpy as np
 import pyvista as pv
+import vtk
 
 from . import mesh_metrics, mesh_ops, mesh_repair, obj_io, topology
+
+# VTK imprime sus propios WARN/ERR en consola (p.ej. cuando falla un filtro
+# de decimate/subdivide) además de lo que ya reportamos nosotros mismos de
+# forma más clara en el overlay -- eso duplicaba el mensaje con un muro de
+# texto técnico. Se apagan los de VTK y se deja solo el aviso propio.
+vtk.vtkObject.GlobalWarningDisplayOff()
 
 
 class Variant(Enum):
@@ -32,6 +39,7 @@ _SOLID_COLORS = {
     "Azul": (0.2, 0.4, 1.0),
     "Rojo": (0.85, 0.2, 0.2),
     "Verde": (0.2, 0.75, 0.3),
+    "Rosa": (0.9, 0.1, 0.7),
     "Amarillo": (0.9, 0.8, 0.1),
     "Gris": (0.6, 0.6, 0.6),
 }
@@ -107,7 +115,8 @@ class MeshViewer:
         self._repair = {"weld": False, "orient": False, "fill_holes": False}
         self._decimate = 0.0
         self._subdivide = 0
-        self.plotter = pv.Plotter(title="Python 3D Viewer", window_size=(1200, 900))
+        self._warning = ""
+        self.plotter = pv.Plotter(title="Python 3D Viewer", window_size=(1400, 800))
         self._setup_ui()
 
     def _get_or_compute(self, variant: Variant) -> VariantData:
@@ -159,25 +168,31 @@ class MeshViewer:
         devolviendo un PolyData vacío) en mallas con vértices sin usar en
         ninguna cara u otra topología degenerada — p.ej. Bunny.obj trae 116
         vértices declarados que ninguna cara referencia, lo que hace fallar
-        la subdivisión Loop. Si eso pasa, se ignora ese paso en vez de
+        la subdivisión Loop. Por eso siempre se descartan esos vértices antes
+        (independiente del checkbox "Soldar vértices", que es sobre fundir
+        posiciones coincidentes, un problema distinto). Si aun así un filtro
+        falla (p.ej. por aristas non-manifold, que esto no arregla), se
+        ignora ese paso y se muestra un aviso en el propio overlay en vez de
         propagar una malla vacía."""
+        self._warning = ""
         if self._decimate <= 0 and self._subdivide <= 0:
             return vertices, faces
+        vertices, faces = mesh_repair.drop_unreferenced_vertices(vertices, faces)
         pd = _surface_polydata(vertices, faces)
         if self._decimate > 0:
             decimated = pd.decimate(self._decimate)
             if decimated.n_points > 0:
                 pd = decimated
             else:
-                print("Aviso: decimar falló en esta malla, se omite.")
+                self._warning = "Decimar falló en esta malla, se omitió."
         if self._subdivide > 0:
             subdivided = pd.subdivide(self._subdivide, subfilter="loop")
             if subdivided.n_points > 0:
                 pd = subdivided
             else:
-                print("Aviso: subdividir falló en esta malla (vértices sin usar o "
-                      "aristas non-manifold — ver 'Aristas non-manifold' en el "
-                      "overlay), se omite.")
+                self._warning = (
+                    "Subdividir falló (posibles aristas non-manifold, ver stat arriba), se omitió."
+                )
         return _polydata_to_mesh(pd)
 
     def _refresh_display(self):
@@ -202,6 +217,12 @@ class MeshViewer:
         stats = topology.compute_stats(vertices, faces, self._polygon_stats)
         num_holes = len(mesh_repair.boundary_loops(faces))
         overlay_text = _format_overlay(stats, num_holes, vertices, faces)
+        if self._warning:
+            # Texto ASCII plano: no hay garantia de que la fuente que usa
+            # VTK para renderizar texto tenga glifos Unicode (el mismo
+            # motivo por el que el histograma de calidad usa caracteres
+            # ASCII en vez de bloques Unicode).
+            overlay_text += f"\n!! {self._warning}"
         self.plotter.add_text(
             overlay_text, position="upper_left", font_size=10, name="stats_overlay",
         )
@@ -303,21 +324,22 @@ class MeshViewer:
             )
             self.plotter.add_text(label, position=(pos[0] + 34, pos[1] + 5), font_size=9)
 
-        # Sliders corridos a la derecha, lejos de la columna de stats (que
-        # ahora es mucho más compacta) para tener margen de sobra.
-        self.plotter.add_text("Color:", position=(0.42, 0.965), font_size=9, viewport=True)
+        # Sliders chicos, en la columna izquierda debajo del texto de stats
+        # (que ahora es compacto, ~5 líneas) — así no tapan el modelo, que
+        # antes quedaba parcialmente cubierto con los sliders arriba/centro.
         self.plotter.add_text_slider_widget(
             self._set_color_mode, data=_COLOR_MODES, value=_COLOR_MODES.index(self._color_mode),
-            pointa=(0.5, 0.96), pointb=(0.85, 0.96),
+            pointa=(0.02, 0.80), pointb=(0.20, 0.80), style="modern",
         )
-
         self.plotter.add_slider_widget(
             self._set_decimate, rng=[0.0, 0.9], value=self._decimate,
-            title="Decimar", fmt="%.2f", pointa=(0.5, 0.85), pointb=(0.85, 0.85),
+            title="Decimar", fmt="%.2f", pointa=(0.02, 0.67), pointb=(0.20, 0.67),
+            style="modern", title_height=0.018,
         )
         self.plotter.add_slider_widget(
             self._set_subdivide, rng=[0, 3], value=self._subdivide,
-            title="Subdividir (Loop)", fmt="%.0f", pointa=(0.5, 0.73), pointb=(0.85, 0.73),
+            title="Subdividir (Loop)", fmt="%.0f", pointa=(0.02, 0.54), pointb=(0.20, 0.54),
+            style="modern", title_height=0.018,
         )
 
     def show(self):

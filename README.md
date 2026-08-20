@@ -48,10 +48,12 @@ volumen (solo si la malla es watertight, es decir "Huecos: 0"), bounding
 box, calidad promedio de triángulo con un mini-histograma en texto, y
 cantidad de aristas non-manifold (compartidas por 3+ caras).
 
-Nota: la subdivisión Loop puede fallar en mallas con vértices sin usar en
-ninguna cara o con aristas non-manifold (defectos reales de algunos .obj,
-p.ej. Bunny.obj trae 116 vértices sin usar) — en ese caso el visor avisa por
-consola y no aplica el cambio.
+Nota: la subdivisión Loop puede fallar en mallas con aristas non-manifold
+(ver el stat "Non-manifold" del overlay) — en ese caso el visor avisa
+directamente en el overlay (no solo por consola) y no aplica el cambio. Los
+vértices sin usar en ninguna cara (defecto real de algunos .obj, p.ej.
+Bunny.obj trae 116 así) se descartan automáticamente antes de decimar o
+subdividir, sin necesidad de activar "Soldar vértices" primero.
 
 ## Estructura
 
